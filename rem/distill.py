@@ -1,93 +1,144 @@
-"""Skill Distillation — turn consolidated trajectories into installable Skills."""
+"""Skill Distillation — turn consolidated experience into usable Skills."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
-from .models import Trajectory, DistilledSkill, FailurePattern
+from .models import Trajectory, DistilledSkill, FailurePattern, StepStatus
+from .config import get_config
 
 
 class SkillDistiller:
-    """MVP distiller: rule-based generation of Skill markdown files."""
+    """Rule-based distiller that produces practical Markdown skills."""
 
     def distill(
         self,
         trajectories: list[Trajectory],
         failure_patterns: list[FailurePattern],
-        out_dir: str | Path = "./skills",
+        out_dir: str | Path | None = None,
     ) -> list[DistilledSkill]:
-        out_dir = Path(out_dir)
+        cfg = get_config()
+        out_dir = Path(out_dir) if out_dir else cfg.skills_dir
         out_dir.mkdir(parents=True, exist_ok=True)
 
         skills: list[DistilledSkill] = []
 
-        # 1. One skill from successful critical paths
-        success_trajs = [t for t in trajectories if t.success and t.steps]
+        # 1. Success path skill
+        success_trajs = [t for t in trajectories if t.success and t.success_steps]
         if success_trajs:
-            skill = self._from_success(success_trajs)
+            skill = self._build_success_skill(success_trajs)
             skills.append(skill)
-            self._write_skill(skill, out_dir)
+            self._write(skill, out_dir)
 
-        # 2. One skill per significant failure pattern
-        for pattern in failure_patterns:
-            if pattern.occurrence_count >= 1:
-                skill = self._from_failure(pattern)
-                skills.append(skill)
-                self._write_skill(skill, out_dir)
+        # 2. Failure avoidance skills (top patterns)
+        for pattern in failure_patterns[:8]:  # limit to most frequent
+            skill = self._build_failure_skill(pattern)
+            skills.append(skill)
+            self._write(skill, out_dir)
+
+        # 3. Combined session summary skill if both exist
+        if success_trajs and failure_patterns:
+            skill = self._build_session_summary(success_trajs, failure_patterns)
+            skills.append(skill)
+            self._write(skill, out_dir)
 
         return skills
 
-    def _from_success(self, trajectories: list[Trajectory]) -> DistilledSkill:
-        # Take the shortest successful critical path as the canonical example
-        best = min(trajectories, key=lambda t: len(t.steps))
-        steps_md = "\n".join(
-            f"{i+1}. Call `{s.tool_call.name}` with {s.tool_call.arguments}"
-            for i, s in enumerate(best.steps)
-        )
-        content = f"""# Successful Path Skill
+    def _build_success_skill(self, trajectories: list[Trajectory]) -> DistilledSkill:
+        # Prefer the shortest successful trajectory as canonical
+        best = min(trajectories, key=lambda t: len(t.success_steps))
+        steps_md = []
+        for i, s in enumerate(best.success_steps, 1):
+            args = s.tool_call.arguments
+            args_str = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:4])
+            steps_md.append(f"{i}. `{s.tool_call.name}`({args_str})")
 
-## Description
-Auto-distilled from successful agent trajectories.
+        task = best.task or "the task"
+        content = f"""# Skill: Successful Path
 
-## Recommended Sequence
-{steps_md}
+## When to use
+Use this sequence when solving similar tasks to: **{task}**
 
-## Source
-Trajectory IDs: {', '.join(t.trajectory_id for t in trajectories[:5])}
+## Recommended tool sequence
+{chr(10).join(steps_md)}
+
+## Notes
+- This path was distilled from {len(trajectories)} successful trajectory(ies).
+- Prefer the shortest reliable path; avoid unnecessary retries.
+
+## Source trajectories
+{', '.join(t.trajectory_id for t in trajectories[:6])}
 """
         return DistilledSkill(
             name="successful-path",
-            description="Canonical successful tool sequence distilled from real runs",
-            content=content,
+            description=f"Canonical successful sequence for: {task}",
+            content=content.strip(),
             source_trajectory_ids=[t.trajectory_id for t in trajectories],
-            tags=["success", "auto-distilled"],
+            tags=["success", "auto-distilled", "critical-path"],
         )
 
-    def _from_failure(self, pattern: FailurePattern) -> DistilledSkill:
-        examples = "\n".join(f"- {e}" for e in pattern.example_errors[:3])
-        content = f"""# Failure Avoidance Skill: {pattern.pattern_id}
+    def _build_failure_skill(self, pattern: FailurePattern) -> DistilledSkill:
+        examples = "\n".join(f"- `{e}`" for e in pattern.example_errors[:4])
+        content = f"""# Skill: Avoid Failure — {pattern.tool_name}
 
-## Description
-{pattern.description}
+## Problem
+{pattern.description} (seen {pattern.occurrence_count} times)
 
-## Observed Errors
+## Observed errors
 {examples}
 
-## Suggested Fix
-{pattern.suggested_fix or "Add precondition checks and better error handling."}
+## Recommended action
+{pattern.suggested_fix}
 
-## Occurrence Count
-{pattern.occurrence_count}
+## Prevention checklist
+- Validate inputs and preconditions before calling `{pattern.tool_name}`
+- Handle the specific error patterns listed above
+- Prefer alternative tools or approaches when this error is likely
+
+## Related trajectories
+{', '.join(pattern.related_trajectory_ids[:5]) or 'n/a'}
 """
         return DistilledSkill(
             name=pattern.pattern_id,
             description=pattern.description,
-            content=content,
-            source_trajectory_ids=[],
-            tags=["failure-pattern", "auto-distilled"],
+            content=content.strip(),
+            source_trajectory_ids=pattern.related_trajectory_ids,
+            tags=["failure-pattern", "auto-distilled", pattern.tool_name],
         )
 
-    def _write_skill(self, skill: DistilledSkill, out_dir: Path) -> None:
+    def _build_session_summary(
+        self,
+        success_trajs: list[Trajectory],
+        patterns: list[FailurePattern],
+    ) -> DistilledSkill:
+        top_failures = "\n".join(
+            f"- `{p.tool_name}` ({p.occurrence_count}x): {p.example_errors[0][:60]}..."
+            for p in patterns[:5]
+        )
+        content = f"""# Skill: Session Lessons
+
+## Summary
+This session produced {len(success_trajs)} successful trajectory(ies) and {len(patterns)} failure pattern(s).
+
+## What worked
+- Prefer the distilled successful-path skill for similar tasks.
+
+## What repeatedly failed
+{top_failures}
+
+## Practical advice
+1. Reuse the successful tool sequence when the task is similar.
+2. Explicitly guard against the top failure patterns above.
+3. Keep trajectories short and focused; drop pure retry noise.
+"""
+        return DistilledSkill(
+            name="session-lessons",
+            description="High-level lessons from the consolidated session",
+            content=content.strip(),
+            source_trajectory_ids=[t.trajectory_id for t in success_trajs],
+            tags=["summary", "auto-distilled"],
+        )
+
+    def _write(self, skill: DistilledSkill, out_dir: Path) -> None:
         path = out_dir / f"{skill.name}.md"
-        path.write_text(skill.content, encoding="utf-8")
+        path.write_text(skill.content + "\n", encoding="utf-8")

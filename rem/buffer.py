@@ -5,16 +5,18 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 from .models import Trajectory, TrajectoryStep, ToolCall, StepStatus
+from .config import get_config
 
 
 class ExperienceBuffer:
-    """Simple but solid local buffer using SQLite + optional JSONL mirror."""
+    """Local Experience Buffer backed by SQLite."""
 
-    def __init__(self, data_dir: str | Path = ".data"):
-        self.data_dir = Path(data_dir)
+    def __init__(self, data_dir: str | Path | None = None):
+        cfg = get_config()
+        self.data_dir = Path(data_dir) if data_dir else cfg.data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "rem.db"
         self._init_db()
@@ -24,19 +26,18 @@ class ExperienceBuffer:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS trajectories (
                     trajectory_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    task TEXT,
-                    success INTEGER,
-                    total_tokens INTEGER,
-                    total_latency_ms REAL,
-                    created_at TEXT,
-                    raw_json TEXT NOT NULL
+                    session_id    TEXT NOT NULL,
+                    task          TEXT,
+                    success       INTEGER NOT NULL DEFAULT 0,
+                    total_tokens  INTEGER NOT NULL DEFAULT 0,
+                    total_latency_ms REAL NOT NULL DEFAULT 0,
+                    created_at    TEXT NOT NULL,
+                    raw_json      TEXT NOT NULL
                 )
             """)
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_session
-                ON trajectories(session_id)
-            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session ON trajectories(session_id)"
+            )
             conn.commit()
 
     def add(self, trajectory: Trajectory) -> None:
@@ -86,40 +87,86 @@ class ExperienceBuffer:
             ).fetchall()
             return [r[0] for r in rows]
 
+    def count(self, session_id: str | None = None) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            if session_id:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM trajectories WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) FROM trajectories").fetchone()
+            return row[0] if row else 0
+
+    def delete_session(self, session_id: str) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM trajectories WHERE session_id = ?", (session_id,)
+            )
+            conn.commit()
+            return cur.rowcount
+
     def ingest_jsonl(self, path: str | Path, session_id: str) -> int:
-        """Ingest a JSONL file of trajectories or steps."""
+        """Ingest a JSONL file. Supports full Trajectory objects or simplified step lists."""
         path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+
         count = 0
         with path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_no, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
-                # Support both full trajectory objects and simple step lists
-                if "trajectory_id" in data:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON on line {line_no}: {e}") from e
+
+                if "trajectory_id" in data and "steps" in data:
+                    # Full trajectory
                     traj = Trajectory.model_validate(data)
                     traj.session_id = session_id
                 else:
-                    # Minimal synthetic trajectory from a list of tool calls
-                    steps = []
-                    for i, item in enumerate(data.get("steps", [data])):
+                    # Simplified format
+                    raw_steps = data.get("steps", [data])
+                    steps: list[TrajectoryStep] = []
+                    for i, item in enumerate(raw_steps):
+                        status_str = item.get("status", "success")
+                        try:
+                            status = StepStatus(status_str)
+                        except ValueError:
+                            status = StepStatus.SUCCESS
+
                         tc = ToolCall(
-                            name=item.get("name", "unknown"),
-                            arguments=item.get("arguments", {}),
+                            name=item.get("name", item.get("tool", "unknown")),
+                            arguments=item.get("arguments", item.get("args", {})),
                             result=item.get("result"),
                             error=item.get("error"),
-                            status=StepStatus(item.get("status", "success")),
+                            latency_ms=item.get("latency_ms"),
+                            tokens=item.get("tokens"),
+                            status=status,
                         )
                         steps.append(TrajectoryStep(step_id=i, tool_call=tc))
+
                     traj = Trajectory(
-                        trajectory_id=data.get("id", f"{session_id}-{count}"),
+                        trajectory_id=str(data.get("id", data.get("trajectory_id", f"{session_id}-{count}"))),
                         session_id=session_id,
                         task=data.get("task"),
                         steps=steps,
-                        success=data.get("success", True),
-                        total_tokens=data.get("total_tokens", 0),
+                        success=bool(data.get("success", True)),
+                        total_tokens=int(data.get("total_tokens", 0)),
+                        total_latency_ms=float(data.get("total_latency_ms", 0)),
                     )
+
                 self.add(traj)
                 count += 1
         return count
+
+    def export_jsonl(self, session_id: str, path: str | Path) -> int:
+        path = Path(path)
+        trajs = self.list_by_session(session_id)
+        with path.open("w", encoding="utf-8") as f:
+            for t in trajs:
+                f.write(t.model_dump_json() + "\n")
+        return len(trajs)
