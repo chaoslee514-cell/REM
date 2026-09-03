@@ -1,98 +1,116 @@
-# Case Study / 使用前后对比案例
+# 真实使用前后对比案例 / Before vs After Case Study
 
-## 场景说明
+本文用一个简化但真实的开发场景，说明 REM 的实际价值。
 
-任务：使用 AI Coding Agent 修复项目中的「认证 Token 过期时间」问题。
+## 场景
 
-这是一个非常常见的真实开发场景：Agent 需要读文件、搜索关键词、修改代码、跑测试。
+任务：修复项目中认证 Token 过期时间过短的问题（`src/auth.py`）。
+
+开发者使用 Coding Agent（如 Claude Code / Cursor）多次尝试完成该任务。
 
 ---
 
-## Before：未使用 REM
+## 使用前：没有 REM
 
-### 第 1 次尝试
+### 实际发生的过程
+
+**第 1 次尝试**
 - Agent 读取 `src/auth.py`
-- 直接尝试 `edit_file`
-- **结果**：失败  
+- 直接尝试修改文件
+- 结果：CI 环境报错  
   `Permission denied: file is read-only in CI environment`
 
-### 第 2 次尝试（新 session）
-- Agent 几乎重复相同操作
-- 再次命中同一个权限错误
-- **结果**：再次失败，额外消耗 tokens
+**第 2 次尝试**
+- 换了一种修改方式再次调用 `edit_file`
+- 结果：同样 Permission denied
+- 上下文中已经堆积了失败信息
 
-### 第 3 次尝试
-- 继续修改 + 跑测试
-- 出现连锁错误：`AuthenticationError: invalid token signature`
-- **结果**：任务未完成，经验没有沉淀
+**第 3 次尝试**
+- 继续重试 + 跑测试
+- 额外出现：`AuthenticationError: invalid token signature`
+- Token 消耗上升，对话越来越长，有效信号被噪声淹没
 
-### 总结（Before）
+### 使用前的核心问题
 
-| 指标 | 表现 |
-|------|------|
-| 重复失败次数 | 2～3 次 |
-| 额外 token 消耗 | 约 3000～5000 |
-| 是否形成可复用知识 | 否 |
-| 换 session 后是否还踩坑 | 是 |
+1. **重复错误没有被沉淀**  
+   同一类 Permission denied 反复出现，Agent 没有「记住」。
 
-**核心问题：** 成功和失败的经验都只存在于当次上下文中，无法跨 session 复用。
+2. **成功路径没有固化**  
+   即使某次成功了，经验也只留在当次对话里，下次类似任务难以复用。
+
+3. **上下文质量下降**  
+   重试、失败、无效步骤不断累积，导致后续推理更贵、更不稳定。
+
+4. **知识无法跨 session 迁移**  
+   新开一个会话，几乎又从零开始试错。
 
 ---
 
-## After：使用 REM
+## 使用后：接入 REM
 
-### 操作步骤
+把上述几次运行的轨迹（成功 + 失败）导出为 JSONL，导入 REM：
 
 ```bash
-# 1. 把包含成功与失败的轨迹导入
-rem record examples/sample_trajectory.jsonl --session auth-fix
-
-# 2. 巩固（过滤噪声 + 提取关键路径 + 挖掘失败模式）
+rem record auth_trajectories.jsonl --session auth-fix
 rem consolidate --session auth-fix
-
-# 3. 蒸馏成 Skill
 rem distill --session auth-fix --out ./skills
 ```
 
-### 自动得到的产物
+### REM 自动完成的事情
 
-1. **`successful-path.md`**  
-   一条最短、可复用的成功工具序列（读文件 → 搜索 → 修改 → 测试）
+1. **过滤噪声**  
+   去掉纯重试、低价值步骤，保留关键路径和必要失败上下文。
 
-2. **`fail-*.md`**  
-   明确记录：
-   - 在 CI 环境下对 `edit_file` 会触发 Permission denied
-   - 给出规避建议（先检查权限/环境，再决定是否直接编辑）
+2. **提取成功路径**  
+   生成 `successful-path.md`，例如：
+   - `read_file`
+   - `grep`
+   - `edit_file`（正确参数）
+   - `run_tests`
 
-3. **`session-lessons.md`**  
-   会话级总结：什么有效、什么反复失败、下次该怎么做
+3. **挖掘失败模式**  
+   识别高频错误：
+   - 工具：`edit_file`
+   - 典型错误：`Permission denied: file is read-only in CI environment`
+   - 给出预防建议（先检查环境是否可写、或改用其他流程）
 
-### 之后再做类似任务时
+4. **输出会话级总结**  
+   `session-lessons.md` 汇总「什么有效、什么反复失败、下次怎么做」。
 
-- 可直接把生成的 Skill 提供给 Agent
-- Agent 优先走成功路径，减少盲目重试
-- 提前避开已知失败模式
-- 上下文更干净，整体 token 更省
+### 使用后的变化
 
-### 总结（After）
-
-| 指标 | 表现 |
-|------|------|
-| 重复失败 | 明显减少 |
-| 经验是否沉淀 | 是（生成可安装 Skill） |
-| 跨 session 是否可复用 | 是 |
-| 可量化收益 | 有 memory reduction 与预估 token 节省报告 |
-
----
-
-## 一句话对比
-
-**Before：** 每次都像第一次做这个任务，重复踩坑。  
-**After：** 把真实踩坑和成功路径变成可复用的 Skill，让 Agent 越用越稳。
+| 维度 | 使用前 | 使用后 |
+|------|--------|--------|
+| 重复踩坑 | 多次撞上同一 Permission denied | 有专门的失败规避 Skill，可提前拦截 |
+| 成功经验 | 留在聊天记录里，难复用 | 固化为 `successful-path` Skill |
+| Token / 上下文 | 重试多，噪声大 | 关键路径保留，噪声明显下降 |
+| 跨会话能力 | 新 session 基本从零开始 | 可直接加载已蒸馏 Skills |
+| 知识形态 | 临时、分散 | 可版本管理、可分享、可安装 |
 
 ---
 
-## 如何复现这个案例
+## 量化直觉（示例）
+
+在示例数据上运行 `rem demo` 时，通常可以看到：
+
+- 原始步骤被压缩（memory reduction）
+- 预估 token 节省（根据减少的步骤估算）
+- 明确的失败模式数量
+- 直接可读的 Skill 文件
+
+这些数字会随真实轨迹变化，但方向一致：**把「试错成本」转成「可积累资产」**。
+
+---
+
+## 适合什么人
+
+- 经常用 Claude Code / Cursor / 其他 Agent 写代码、改 bug 的个人开发者
+- 希望团队减少重复踩坑、沉淀内部 Skill 的小团队
+- 做 Agent 产品、需要从真实运行中持续产出领域技能的人
+
+---
+
+## 如何复现本案例
 
 ```bash
 git clone https://github.com/chaoslee514-cell/REM.git
@@ -111,15 +129,9 @@ ls skills/
 
 ---
 
-## 适用人群
+## 总结
 
-- 经常使用 Claude Code / Cursor / 其他 Coding Agent 的开发者
-- 希望减少 Agent 重复犯错的人
-- 想把成功经验沉淀成团队可复用 Skill 的人
-- 关注 token 成本与上下文质量的工程师
+**使用前：** Agent 会重复犯错，成功经验难以沉淀，上下文越用越脏。  
+**使用后：** 失败被归纳成规避技能，成功被蒸馏成可复用路径，下次同类任务有据可依。
 
----
-
-## 中文搜索关键词
-
-AI Agent 经验回放、Agent Skill 自动生成、智能体失败模式、Agent 记忆巩固、Claude Code 技能蒸馏、Cursor Agent 经验复用、Agent 不再重复犯错
+这就是 REM 最直接的实用价值。

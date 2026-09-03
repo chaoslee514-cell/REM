@@ -3,13 +3,13 @@
 ## [0.3.1] - 2026-09-03
 
 ### Added
-- Before vs After real usage case study (`docs/case-study.md`)
-- Chinese documentation (`docs/README.zh-CN.md`)
-- Bilingual README sections for better Chinese search discoverability
-- Chinese keywords and problem/solution descriptions
+- Before vs After case study (`docs/case-study.md`)
+- Chinese content in README for better search discoverability
+- Keywords section (中英文) for SEO
 
-### Improved
-- README first-screen clarity for both English and Chinese readers
+### Changed
+- README now bilingual-friendly (English + 中文关键说明)
+- Clearer value demonstration with real usage comparison table
 
 ## [0.3.0] - 2026-09-03
 
