@@ -9,7 +9,7 @@ from .config import get_config
 
 
 class SkillDistiller:
-    """Rule-based distiller that produces practical Markdown skills."""
+    """Rule-based distiller that produces practical, actionable Markdown skills."""
 
     def distill(
         self,
@@ -23,21 +23,18 @@ class SkillDistiller:
 
         skills: list[DistilledSkill] = []
 
-        # 1. Success path skill
         success_trajs = [t for t in trajectories if t.success and t.success_steps]
         if success_trajs:
             skill = self._build_success_skill(success_trajs)
             skills.append(skill)
             self._write(skill, out_dir)
 
-        # 2. Failure avoidance skills (top patterns)
-        for pattern in failure_patterns[:8]:  # limit to most frequent
+        for pattern in failure_patterns[:6]:
             skill = self._build_failure_skill(pattern)
             skills.append(skill)
             self._write(skill, out_dir)
 
-        # 3. Combined session summary skill if both exist
-        if success_trajs and failure_patterns:
+        if success_trajs or failure_patterns:
             skill = self._build_session_summary(success_trajs, failure_patterns)
             skills.append(skill)
             self._write(skill, out_dir)
@@ -45,28 +42,36 @@ class SkillDistiller:
         return skills
 
     def _build_success_skill(self, trajectories: list[Trajectory]) -> DistilledSkill:
-        # Prefer the shortest successful trajectory as canonical
         best = min(trajectories, key=lambda t: len(t.success_steps))
         steps_md = []
         for i, s in enumerate(best.success_steps, 1):
             args = s.tool_call.arguments
-            args_str = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:4])
-            steps_md.append(f"{i}. `{s.tool_call.name}`({args_str})")
+            # Keep argument display readable
+            items = list(args.items())[:5]
+            args_str = ", ".join(f"{k}={v!r}" for k, v in items)
+            if len(args) > 5:
+                args_str += ", ..."
+            steps_md.append(f"{i}. **{s.tool_call.name}**({args_str})")
 
-        task = best.task or "the task"
+        task = best.task or "similar tasks"
         content = f"""# Skill: Successful Path
 
 ## When to use
-Use this sequence when solving similar tasks to: **{task}**
+Apply this sequence when working on: **{task}**
 
 ## Recommended tool sequence
 {chr(10).join(steps_md)}
 
-## Notes
-- This path was distilled from {len(trajectories)} successful trajectory(ies).
-- Prefer the shortest reliable path; avoid unnecessary retries.
+## Why this path
+- Distilled from {len(trajectories)} successful trajectory(ies)
+- Prefers the shortest reliable path
+- Strips retries and dead-ends
 
-## Source trajectories
+## Tips
+- Follow the order above unless the environment has changed
+- If a step fails, check the related failure-avoidance skills before retrying
+
+## Source
 {', '.join(t.trajectory_id for t in trajectories[:6])}
 """
         return DistilledSkill(
@@ -79,21 +84,23 @@ Use this sequence when solving similar tasks to: **{task}**
 
     def _build_failure_skill(self, pattern: FailurePattern) -> DistilledSkill:
         examples = "\n".join(f"- `{e}`" for e in pattern.example_errors[:4])
-        content = f"""# Skill: Avoid Failure — {pattern.tool_name}
+        content = f"""# Skill: Avoid Failure — `{pattern.tool_name}`
 
 ## Problem
-{pattern.description} (seen {pattern.occurrence_count} times)
+{pattern.description}  
+Observed **{pattern.occurrence_count}** time(s).
 
-## Observed errors
+## Concrete errors seen
 {examples}
 
-## Recommended action
+## What to do instead
 {pattern.suggested_fix}
 
 ## Prevention checklist
-- Validate inputs and preconditions before calling `{pattern.tool_name}`
-- Handle the specific error patterns listed above
-- Prefer alternative tools or approaches when this error is likely
+- [ ] Validate preconditions before calling `{pattern.tool_name}`
+- [ ] Handle the exact error patterns listed above
+- [ ] Prefer an alternative approach when this failure is likely
+- [ ] Log the failure context so future consolidations can improve
 
 ## Related trajectories
 {', '.join(pattern.related_trajectory_ids[:5]) or 'n/a'}
@@ -111,29 +118,39 @@ Use this sequence when solving similar tasks to: **{task}**
         success_trajs: list[Trajectory],
         patterns: list[FailurePattern],
     ) -> DistilledSkill:
+        success_count = len(success_trajs)
+        fail_count = len(patterns)
+
         top_failures = "\n".join(
-            f"- `{p.tool_name}` ({p.occurrence_count}x): {p.example_errors[0][:60]}..."
+            f"- **{p.tool_name}** ({p.occurrence_count}x): {p.example_errors[0][:70]}..."
             for p in patterns[:5]
-        )
+        ) or "- None recorded"
+
         content = f"""# Skill: Session Lessons
 
-## Summary
-This session produced {len(success_trajs)} successful trajectory(ies) and {len(patterns)} failure pattern(s).
+## Snapshot
+- Successful trajectories: **{success_count}**
+- Failure patterns: **{fail_count}**
 
 ## What worked
-- Prefer the distilled successful-path skill for similar tasks.
+- Reuse the `successful-path` skill for similar tasks
+- Prefer short, high-signal tool sequences
 
 ## What repeatedly failed
 {top_failures}
 
-## Practical advice
-1. Reuse the successful tool sequence when the task is similar.
-2. Explicitly guard against the top failure patterns above.
-3. Keep trajectories short and focused; drop pure retry noise.
+## Practical rules for next runs
+1. Start from the successful-path skill when the task looks similar
+2. Explicitly guard against the top failure patterns above
+3. Keep new trajectories focused — drop pure retry noise before storing
+4. Re-run consolidation after a batch of new experience
+
+## How to use these skills
+Feed the generated `.md` files back into your agent as Skills / custom instructions.
 """
         return DistilledSkill(
             name="session-lessons",
-            description="High-level lessons from the consolidated session",
+            description="High-level lessons distilled from the session",
             content=content.strip(),
             source_trajectory_ids=[t.trajectory_id for t in success_trajs],
             tags=["summary", "auto-distilled"],

@@ -2,117 +2,165 @@
 
 **From agent runs to production-ready Skills.**
 
-REM captures structured agent trajectories, removes noise, extracts critical paths, mines failure patterns, and distills them into **installable Skills** + clean memory.
+REM turns real agent execution trajectories into reusable Skills and clean memory.  
+It filters noise, extracts critical paths, mines failure patterns, and distills them into installable Markdown skills.
 
-It is not another vector store. It is an offline experience-replay and skill-distillation engine designed for engineers who run agents seriously.
+> Not another vector memory.  
+> An offline experience-replay engine that makes agents stop repeating the same mistakes.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/chaoslee514-cell/REM)
+[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](https://github.com/chaoslee514-cell/REM)
 
 ---
 
-## Why REM
+## Quick Demo (30 seconds)
 
-Real problems when running agents in 2026:
+```bash
+pip install -e .
+rem demo
+```
 
-- Agents repeat the same mistakes across sessions
-- Successful tool sequences are never turned into reusable Skills
-- Long trajectories are full of retries and dead-ends → context pollution + higher cost
-- Most memory systems only store & retrieve; almost none systematically **distill executable knowledge** from real runs
+This single command will:
 
-REM treats every agent run as experience in a Replay Buffer and runs a measurable consolidation pipeline.
+1. Load sample trajectories
+2. Run consolidation (noise removal + critical path)
+3. Mine failure patterns
+4. Generate Skills into `./skills/`
+5. Print a clear metrics report
 
----
+Then open the generated files:
 
-## What you get
-
-| Capability | Description |
-|------------|-------------|
-| Trajectory Capture | Structured recording of tool calls, results, errors, latency, tokens |
-| Experience Buffer | Local-first (SQLite + JSONL), queryable by session |
-| Consolidation | Configurable filtering, critical-path extraction, failure clustering |
-| Skill Distillation | Generates usable Markdown Skills with clear guidance |
-| Metrics | Memory reduction ratio, estimated token savings, pattern counts |
-| CLI | `record / consolidate / distill / stats / list / export / install` |
-| MCP Server | Basic integration point for agent runtimes |
+```bash
+ls skills/
+cat skills/successful-path.md
+cat skills/session-lessons.md
+```
 
 ---
 
-## Quick Start
+## The Problem
+
+When you run coding agents seriously, you keep seeing the same issues:
+
+- The agent retries the same failing tool call across sessions
+- Successful sequences are never captured as reusable knowledge
+- Long trajectories are full of dead-ends → context gets dirty and expensive
+- Most memory tools only store & retrieve; almost none **distill executable Skills** from real runs
+
+REM treats every run as experience in a Replay Buffer and runs a measurable offline consolidation pipeline.
+
+---
+
+## What REM Does
+
+| Step | What happens |
+|------|----------------|
+| **Capture** | Ingest structured trajectories (tool calls, results, errors, tokens) |
+| **Consolidate** | Filter noise, keep critical path + failure context, mine patterns |
+| **Distill** | Generate practical Markdown Skills |
+| **Measure** | Report memory reduction, estimated token savings, pattern counts |
+
+---
+
+## Installation
 
 ```bash
 git clone https://github.com/chaoslee514-cell/REM.git
 cd REM
 pip install -e .
-
-# Run the demo end-to-end
-rem record examples/sample_trajectory.jsonl --session demo
-rem consolidate --session demo
-rem distill --session demo --out ./skills
-rem stats --session demo
 ```
 
-Generated skills appear in `./skills/`.
+Requirements: Python 3.10+
 
 ---
 
-## CLI Reference
+## Usage
 
+### One-command demo
 ```bash
-rem record <file.jsonl> [--session ID]     # Ingest trajectories
-rem consolidate [--session ID]             # Filter + extract + mine patterns
-rem distill [--session ID] [--out DIR]     # Generate Skill files
-rem stats [--session ID]                   # Show metrics
-rem list                                   # List all sessions
-rem export --session ID [--out file]       # Export cleaned trajectories
-rem install <skill.md>                     # Copy skill to installed_skills/
-rem serve                                  # Start MCP server (optional extra)
+rem demo
 ```
+
+### Manual workflow
+```bash
+# 1. Ingest trajectories
+rem record examples/sample_trajectory.jsonl --session my-task
+
+# 2. Consolidate
+rem consolidate --session my-task
+
+# 3. Distill into Skills
+rem distill --session my-task --out ./skills
+
+# 4. Inspect
+rem stats --session my-task
+rem list
+```
+
+### Other useful commands
+```bash
+rem export --session my-task --out cleaned.jsonl
+rem install skills/successful-path.md
+```
+
+---
+
+## Example Output (from `rem demo`)
+
+After running the demo you typically get:
+
+- `skills/successful-path.md` — canonical successful tool sequence
+- `skills/fail-*.md` — failure avoidance skills with concrete errors
+- `skills/session-lessons.md` — high-level lessons from the session
+
+Plus a report showing memory reduction and estimated token savings.
 
 ---
 
 ## Architecture
 
 ```
-Agent Runtime / JSONL
-        │
-        ▼
-+---------------------+
-|  Experience Buffer  |  SQLite + JSONL
-+----------│----------+
-           │  consolidate
+JSONL / Agent Runtime
+         │
+         ▼
++----------------------+
+|  Experience Buffer   |   SQLite (local-first)
++----------│-----------+
+           │ consolidate
            ▼
-+---------------------+
-| Consolidation Engine|
-| • Filter & score    |
-| • Critical path     |
-| • Failure patterns  |
-+----------│----------+
-           │  distill
++----------------------+
+| Consolidation Engine |
+| • Filter & score     |
+| • Critical path      |
+| • Failure patterns   |
++----------│-----------+
+           │ distill
      ┌-----┴-----┐
      ▼           ▼
-Skill Files    Clean Memory
+ Skill Files    Metrics
 ```
 
 ---
 
 ## Design Principles
 
-1. **Local-first** — Data never leaves your machine by default
+1. **Local-first** — Data stays on your machine
 2. **Measurable** — Every run produces concrete numbers
-3. **Skill-native** — Output is immediately useful to current agent ecosystems
+3. **Skill-native** — Output is immediately usable
 4. **Engineer-centric** — CLI-first, explicit, minimal magic
-5. **Incremental** — Start simple (rules), add LLM distillation later
+5. **Honest** — Limitations are documented, not hidden
 
 ---
 
-## Current Limitations (honest)
+## Current Limitations
 
-- Trajectory capture is still manual (JSONL import). Automatic hooks for Claude Code / Cursor are planned.
-- Skill quality is rule-based and template-driven. Real production quality needs better critical-path algorithms + optional LLM refinement.
-- Failure clustering is currently tool-name based. Semantic clustering is on the roadmap.
-- No large-scale benchmark suite yet.
+- Trajectory capture is still manual (JSONL). Automatic hooks for Claude Code / Cursor are planned.
+- Skill generation is rule-based. Higher quality will come from better critical-path algorithms + optional LLM refinement.
+- Failure clustering is currently signature-based, not full semantic clustering.
+- No large public benchmark suite yet.
+
+These are known and actively being improved.
 
 ---
 
@@ -121,14 +169,14 @@ Skill Files    Clean Memory
 ```
 REM/
 ├── rem/
-│   ├── models.py          # Data models
-│   ├── buffer.py          # Experience Buffer
-│   ├── consolidator.py    # Consolidation engine
-│   ├── distill.py         # Skill distillation
-│   ├── metrics.py         # Reporting
-│   ├── cli.py             # CLI
-│   ├── mcp_server.py      # MCP stub
-│   └── config.py          # Simple config
+│   ├── cli.py
+│   ├── buffer.py
+│   ├── consolidator.py
+│   ├── distill.py
+│   ├── models.py
+│   ├── metrics.py
+│   ├── config.py
+│   └── mcp_server.py
 ├── examples/
 ├── tests/
 ├── pyproject.toml
@@ -140,25 +188,25 @@ REM/
 ## Roadmap
 
 - [x] Core buffer + consolidation + distillation
+- [x] One-command demo
 - [x] Usable CLI + metrics
 - [x] Basic tests
-- [ ] Automatic trajectory capture from popular runtimes
+- [ ] Automatic trajectory capture from popular agent runtimes
 - [ ] Better critical-path & importance scoring
 - [ ] Optional LLM-assisted distillation
 - [ ] Semantic failure clustering
-- [ ] Reproducible benchmark suite
-- [ ] Policy plugins
+- [ ] Public benchmark on repeated-error tasks
 
 ---
 
 ## Contributing
 
-PRs and issues welcome. Highest value contributions right now:
+Issues and PRs are welcome. Highest-impact areas right now:
 
 1. Runtime adapters (Claude Code, Cursor, etc.)
-2. Better scoring / critical-path algorithms
+2. Better scoring / critical-path logic
 3. Higher-quality skill templates
-4. Benchmarks on repeated-error tasks
+4. Real-world usage reports and benchmarks
 
 ---
 

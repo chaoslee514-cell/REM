@@ -7,6 +7,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 
 from .buffer import ExperienceBuffer
 from .consolidator import Consolidator
@@ -25,6 +26,68 @@ console = Console()
 
 def get_buffer() -> ExperienceBuffer:
     return ExperienceBuffer()
+
+
+@app.command()
+def demo():
+    """Run the full end-to-end demo with sample data (recommended first command)."""
+    from importlib import resources
+    import shutil
+
+    console.print(Panel.fit(
+        "[bold cyan]REM Demo[/bold cyan]\n"
+        "Loading sample trajectories → consolidating → distilling Skills",
+        border_style="cyan",
+    ))
+
+    # Locate sample file relative to package or repo root
+    sample_candidates = [
+        Path("examples/sample_trajectory.jsonl"),
+        Path(__file__).resolve().parent.parent / "examples" / "sample_trajectory.jsonl",
+    ]
+    sample = next((p for p in sample_candidates if p.exists()), None)
+    if sample is None:
+        console.print("[red]Sample data not found. Please run from the repo root.[/red]")
+        raise typer.Exit(1)
+
+    session = "demo"
+    buf = get_buffer()
+
+    # Clean previous demo data for a fresh run
+    buf.delete_session(session)
+
+    console.print("\n[bold]1. Recording sample trajectories...[/bold]")
+    count = buf.ingest_jsonl(sample, session_id=session)
+    console.print(f"   [green]✓[/green] Ingested {count} trajectories")
+
+    console.print("\n[bold]2. Running consolidation...[/bold]")
+    consolidator = Consolidator(buf)
+    filtered, patterns, report = consolidator.run(session)
+    for t in filtered:
+        buf.add(t)
+    console.print(f"   [green]✓[/green] Kept {report.kept_steps}/{report.original_steps} steps "
+                  f"({report.memory_reduction_ratio:.0%} reduction)")
+    console.print(f"   [green]✓[/green] Found {len(patterns)} failure pattern(s)")
+
+    console.print("\n[bold]3. Distilling Skills...[/bold]")
+    out_dir = get_config().skills_dir
+    distiller = SkillDistiller()
+    skills = distiller.distill(filtered, patterns, out_dir=out_dir)
+    console.print(f"   [green]✓[/green] Generated {len(skills)} skill(s) → [cyan]{out_dir}/[/cyan]")
+    for s in skills:
+        console.print(f"      • {s.name}.md")
+
+    print_report(report, skills_count=len(skills))
+
+    console.print(Panel.fit(
+        "[bold green]Demo complete![/bold green]\n\n"
+        f"Inspect the skills:\n"
+        f"  cat {out_dir}/successful-path.md\n"
+        f"  cat {out_dir}/session-lessons.md\n\n"
+        "Next: try with your own trajectories\n"
+        "  rem record your_file.jsonl --session my-task",
+        border_style="green",
+    ))
 
 
 @app.command()
@@ -57,13 +120,12 @@ def consolidate(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-    # Write cleaned trajectories back
     for t in filtered:
         buf.add(t)
 
     console.print(f"[green]✓[/green] Consolidated session [cyan]{session}[/cyan]")
     if patterns:
-        console.print(f"   Top failure patterns: {len(patterns)}")
+        console.print(f"   Top failure patterns:")
         for p in patterns[:3]:
             console.print(f"   • {p.tool_name} ({p.occurrence_count}x)")
 

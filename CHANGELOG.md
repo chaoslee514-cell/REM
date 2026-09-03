@@ -1,22 +1,32 @@
 # Changelog
 
+## [0.3.0] - 2026-09-03
+
+### Added
+- `rem demo` — one-command end-to-end experience
+- Stronger README focused on quick value demonstration
+- Improved sample trajectories with repeated failure patterns
+- `examples/README.md`
+
+### Changed
+- Skill templates made more actionable (checklists, clearer guidance)
+- Demo automatically cleans previous demo session for a fresh run
+- Version bumped to 0.3.0
+
+### Improved
+- First-run experience significantly smoother
+- Better default messaging and next-step hints after demo
+
 ## [0.2.0] - 2026-09-03
 
 ### Added
-- `rem list` and `rem export` commands
-- Better critical-path extraction (keeps limited context around failures)
-- Improved failure pattern mining with error signatures
-- Higher-quality Skill templates (success path, failure avoidance, session lessons)
-- Basic test suite (`tests/test_basic.py`)
-- `rem/config.py` for centralized settings
-- Richer metrics and CLI output
+- `rem list` and `rem export`
+- Better critical-path extraction
+- Improved failure pattern mining
+- Higher-quality Skill templates
+- Basic test suite
+- `rem/config.py`
 
 ### Changed
-- Version bumped to 0.2.0
-- Models improved with importance field and better helpers
-- Distiller produces more practical, actionable Skill content
-- README rewritten for clarity and honesty about current limitations
-- Buffer ingest is more robust to different JSONL shapes
-
-### Fixed
-- Various edge cases in trajectory parsing and empty sessions
+- Models and buffer robustness improved
+- README rewritten for clarity
