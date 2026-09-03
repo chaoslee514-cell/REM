@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1] - 2026-09-03
+
+### Added
+- Before vs After real usage case study (`docs/case-study.md`)
+- Chinese documentation (`docs/README.zh-CN.md`)
+- Bilingual README sections for better Chinese search discoverability
+- Chinese keywords and problem/solution descriptions
+
+### Improved
+- README first-screen clarity for both English and Chinese readers
+
 ## [0.3.0] - 2026-09-03
 
 ### Added
@@ -9,13 +20,9 @@
 - `examples/README.md`
 
 ### Changed
-- Skill templates made more actionable (checklists, clearer guidance)
-- Demo automatically cleans previous demo session for a fresh run
+- Skill templates made more actionable
+- Demo automatically cleans previous demo session
 - Version bumped to 0.3.0
-
-### Improved
-- First-run experience significantly smoother
-- Better default messaging and next-step hints after demo
 
 ## [0.2.0] - 2026-09-03
 
@@ -26,7 +33,3 @@
 - Higher-quality Skill templates
 - Basic test suite
 - `rem/config.py`
-
-### Changed
-- Models and buffer robustness improved
-- README rewritten for clarity
